@@ -6,7 +6,7 @@ Description.
 
 Required environment variables.
 
-```
+```bash
 CLOUDANT_URL=<url>
 CLOUDANT_APIKEY=<apikey>
 ```
