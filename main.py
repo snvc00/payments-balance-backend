@@ -2,74 +2,78 @@ from http import HTTPStatus
 from os import environ
 
 from fastapi import FastAPI
+from ibm_cloud_sdk_core import ApiException
+from ibmcloudant.cloudant_v1 import CloudantV1, Document
+
 from models.payment import Payment
 
-from ibm_cloud_sdk_core import ApiException
-from ibmcloudant.cloudant_v1 import CloudantV1
-
 app = FastAPI()
-db = []
 client = CloudantV1.new_instance()
+db_name = environ["PAYMENTS_BALANCE_DATABASE_NAME"]
 
-@app.get("/")
-def read_root():
+@app.get("/api/cloudant")
+def cloudant_server_info():
     server_information = client.get_server_information().get_result()
 
-    return {
-        "message": "Hello world!",
-        "server": server_information
-    }
+    return server_information
 
 
 #! Remove or improve this endpoint
-@app.get("/api/cloudant")
-def create_cloudant_database():
+@app.get("/api/cloudant/databases/{new_db_name}")
+def create_cloudant_database(new_db_name: str):
     try:
-        db_name = environ["PAYMENTS_BALANCE_DATABASE_NAME"]
-        put_database_result = client.put_database(db=db_name).get_result()
-        if put_database_result["ok"]:
-            print(f'"{db_name}" database created.')
+        result = client.put_database(db=new_db_name).get_result()
+
+        return result
     except ApiException as api_exception:
         if api_exception.code == HTTPStatus.PRECONDITION_FAILED:
-            print(f'Cannot create "{db_name}" database, it already exists.')
+            print(f"Existing database with name: {new_db_name}")
+
+        return api_exception
 
 
 @app.post("/api/payments/")
 async def create_payment(payment: Payment):
-    return {
-        "operation": "Create",
-        "details": payment
-    }
+    new_payment = Document.from_dict(payment.dict())
+    response = client.post_document(db=db_name, document=new_payment)
+
+    return response.result
 
 
 @app.get("/api/payments/")
 async def read_payments():
-    return {
-        "operation": "Read all",
-        "details": None
-    }
+    payments = client.post_all_docs(db=db_name, include_docs=True).get_result()
+
+    return payments
 
 
 @app.get("/api/payments/{payment_id}")
 async def read_payment(payment_id: str):
-    return {
-        "operation": "Read one",
-        "details": payment_id
-    }
+    payment = client.get_document(db=db_name, doc_id=payment_id).get_result()
+
+    return payment
 
 
 @app.put("/api/payments/{payment_id}")
-async def update_payment(payment_id: str):
-    return {
-        "operation": "Update",
-        "details": payment_id
-    }
+async def update_payment(payment_id: str, payment: Payment):
+    payment.id = payment_id
+    updated_payment = Document.from_dict(payment.dict())
+    response = client.post_document(db=db_name, document=updated_payment)
+
+    return response.result
 
 
 @app.delete("/api/payments/{payment_id}")
 async def delete_payment(payment_id: str):
-    return {
-        "operation": "Delete",
-        "details": payment_id
-    }
+    try:
+        payment = client.get_document(db=db_name, doc_id=payment_id).get_result()
+        response = client.delete_document(
+            db=db_name, doc_id=payment_id, rev=payment["_rev"]
+        ).get_result()
 
+        return response
+    except ApiException as api_exception:
+        if api_exception.code == HTTPStatus.NOT_FOUND:
+            print(f"Payment with ID: {payment_id} not found")
+
+        return api_exception
